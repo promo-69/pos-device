@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 #include <WebServer.h>
-#include <WebSocketsClient.h>
+#include <SocketIOclient.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
 
@@ -22,7 +22,7 @@ public:
 
 private:
     WebServer server;
-    WebSocketsClient webSocket;
+    SocketIOclient socketIO;
     bool wsEnabled;
     
     void setupHttpServer();
@@ -38,7 +38,7 @@ private:
     void handleHttpPaymentsGetList();
     void handleHttpPaymentsGetDetail();
     
-    static void webSocketEvent(WStype_t type, uint8_t * payload, size_t length);
+    static void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length);
 };
 
 extern CommsHandler* globalComms;

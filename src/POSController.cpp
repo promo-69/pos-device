@@ -67,13 +67,21 @@ String POSController::readCardReal() {
     
     isReaderBusy = true; // Bloquea el acceso al lector libre
     String uid = "";
+    uint32_t startWait = millis();
+    
     while (uid == "") {
+        if (millis() - startWait > 15000) {
+            Serial.println(">>> TIEMPO ESPERA TARJETA AGOTADO <<<");
+            break;
+        }
         uid = tryReadCard(true);
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     isReaderBusy = false; // Libera el lector
 
-    Serial.println(">>> TARJETA DETECTADA <<<");
+    if (uid != "") {
+        Serial.println(">>> TARJETA DETECTADA <<<");
+    }
     return uid;
 }
 
@@ -84,42 +92,82 @@ void POSController::executeBankTransaction(const char* operationId) {
     paymentBuffer.updateState(operationId, PROCESANDO, "Por favor acerque la tarjeta al lector.");
 
     String cardId = readCardReal();
+    
+    if (cardId == "") {
+        paymentBuffer.updateState(operationId, ERROR, "Tiempo de espera agotado. No se leyo tarjeta.");
+        if (strcmp(op->source, "WSS") == 0 && globalComms != nullptr) {
+            String err = "[\"pos_payment_error\", {\"operationId\":\"" + String(operationId) + "\", \"status\":\"timeout\"}]";
+            // A esto le accedemos directamente via socketIO en CommsHandler pero ya que webSocket/socketIO son privados necesitamos un helper. 
+            // Oh, sendWebSocketMessage fue modificada a enviar eventos de respuesta.
+            // Para mantenerlo consistente, llamaremos a sendWebSocketMessage pero enviándole un JSON plano si tuvieramos la necesidad, 
+            // pero como sendWebSocketMessage envuelve todo en pos_payment_response, es mejor mandarlo asi:
+            // "{\"error\":\"timeout\"}" envuelto en pos_payment_response. 
+            // Wait, el error del banco se enviaba así! 
+            globalComms->sendWebSocketMessage("{\"operationId\":\"" + String(operationId) + "\", \"status\":\"timeout\", \"error\":\"No se leyo tarjeta\"}");
+        }
+        return; // Cancelamos ejecucion y pasamos a la sig en cola
+    }
 
     paymentBuffer.updateState(operationId, PROCESANDO, "Autorizando con el banco...");
 
     if (WiFi.status() == WL_CONNECTED) {
-        WiFiClientSecure client;
-        client.setInsecure(); // INSECURE FOR PRODUCTION
+        bool isHttps = String(apiUrl).startsWith("https://");
+        WiFiClient* client = nullptr;
+        
+        if (isHttps) {
+            WiFiClientSecure* secureClient = new WiFiClientSecure();
+            secureClient->setInsecure(); // INSECURE FOR PRODUCTION
+            client = secureClient;
+        } else {
+            client = new WiFiClient();
+        }
 
-        HTTPClient https;
-        Serial.print("[HTTPS] Conectando a ");
+        HTTPClient http;
+        http.setTimeout(30000); // Darle hasta 15 segundos al servidor para responder
+        Serial.print(isHttps ? "[HTTPS] Conectando a " : "[HTTP] Conectando a ");
         Serial.println(apiUrl);
 
-        if (https.begin(client, apiUrl)) {
-            https.addHeader("Content-Type", "application/json");
-            https.addHeader("Authorization", "Bearer " + apiKey);
+        if (http.begin(*client, apiUrl)) {
+            http.addHeader("Content-Type", "application/json");
+            http.addHeader("Authorization", "Bearer " + String(apiKey));
 
-            // Inyectar cardUid al JSON raw de forma segura
-            JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, op->jsonPayload);
+            // Construir JSON estricto para el API bancario
+            JsonDocument frontDoc;
+            DeserializationError error = deserializeJson(frontDoc, op->jsonPayload);
             
             if (!error) {
-                doc["cardUid"] = cardId;
-                String requestBody;
-                serializeJson(doc, requestBody);
+                JsonDocument bankDoc;
+                bankDoc["sourceCard"] = cardId;
+                bankDoc["destinationDocument"] = frontDoc["destinationDocument"];
+                bankDoc["destinationAccount"] = frontDoc["destinationAccount"];
+                bankDoc["amount"] = frontDoc["amount"];
 
-                Serial.print("[HTTPS] Enviando POST: ");
+                String requestBody;
+                serializeJson(bankDoc, requestBody);
+
+                Serial.print(isHttps ? "[HTTPS] Enviando POST: " : "[HTTP] Enviando POST: ");
                 Serial.println(requestBody);
 
-                int httpCode = https.POST(requestBody);
+                int httpCode = http.POST(requestBody);
                 String resultMessage = "";
 
                 if (httpCode > 0) {
-                    String payload = https.getString();
-                    resultMessage = "Exito, codigo HTTP: " + String(httpCode);
-                    paymentBuffer.updateState(operationId, COMPLETADO, resultMessage.c_str());
+                    String payload = http.getString();
+                    if (httpCode >= 200 && httpCode < 300) {
+                        resultMessage = "Aprobado (HTTP " + String(httpCode) + ")";
+                        paymentBuffer.updateState(operationId, COMPLETADO, resultMessage.c_str());
+                    } else {
+                        JsonDocument errDoc;
+                        DeserializationError errParsing = deserializeJson(errDoc, payload);
+                        if (!errParsing && errDoc["error"].is<String>()) {
+                            resultMessage = errDoc["error"].as<String>();
+                        } else {
+                            resultMessage = "Denegado (HTTP " + String(httpCode) + ")";
+                        }
+                        paymentBuffer.updateState(operationId, ERROR, resultMessage.c_str());
+                    }
                 } else {
-                    resultMessage = "Error en peticion: " + https.errorToString(httpCode);
+                    resultMessage = "Fallo de red: " + http.errorToString(httpCode);
                     paymentBuffer.updateState(operationId, ERROR, resultMessage.c_str());
                 }
 
@@ -127,16 +175,18 @@ void POSController::executeBankTransaction(const char* operationId) {
                 if (strcmp(op->source, "WSS") == 0 && globalComms != nullptr) {
                     String wsMsg = "{\"operationId\":\"" + String(operationId) + "\", \"status\":\"" + String(op->estado == COMPLETADO ? "success" : "error") + "\"}";
                     globalComms->sendWebSocketMessage(wsMsg);
+                    paymentBuffer.setEmittedAt(operationId);
                 }
             } else {
                 paymentBuffer.updateState(operationId, ERROR, "Error re-estructurando JSON");
             }
-            https.end();
+            http.end();
         } else {
-            paymentBuffer.updateState(operationId, ERROR, "Incapaz de conectar");
+            paymentBuffer.updateState(operationId, ERROR, "Error conectando al banco");
         }
+        delete client;
     } else {
-         paymentBuffer.updateState(operationId, ERROR, "WiFi Desconectado");
+        paymentBuffer.updateState(operationId, ERROR, "WiFi desconectado");
     }
 }
 

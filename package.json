@@ -1,0 +1,28 @@
+{
+  "name": "cineflix-pos",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "build": "pio run",
+    "upload": "pio run -t upload",
+    "erase": "pio run -t erase",
+    "clean-install": "pio run -t erase -t upload"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/promo-69/pos-device.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/promo-69/pos-device/issues"
+  },
+  "homepage": "https://github.com/promo-69/pos-device#readme"
+}

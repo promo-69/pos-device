@@ -1,5 +1,6 @@
 #include "PaymentBuffer.h"
 #include <ArduinoJson.h>
+#include <time.h>
 
 PaymentBuffer paymentBuffer;
 
@@ -9,7 +10,7 @@ PaymentBuffer::PaymentBuffer() {
 
 void PaymentBuffer::init() {
     portENTER_CRITICAL(&mux);
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < MAX_BUFFER; i++) {
         buffer[i].isActive = false;
     }
     portEXIT_CRITICAL(&mux);
@@ -27,9 +28,12 @@ OperacionPago* PaymentBuffer::addOperation(const char* opId, uint32_t orderId, f
     strlcpy(buffer[index].source, source, sizeof(buffer[index].source));
     buffer[index].estado = EN_COLA;
     strlcpy(buffer[index].responseMessage, "Esperando procesamiento", sizeof(buffer[index].responseMessage));
+    buffer[index].createdAt = time(nullptr);
+    buffer[index].updatedAt = 0;
+    buffer[index].emittedAt = 0;
     buffer[index].isActive = true;
     
-    currentIndex = (currentIndex + 1) % 50; // Circular
+    currentIndex = (currentIndex + 1) % MAX_BUFFER; // Circular
     
     portEXIT_CRITICAL(&mux);
     
@@ -39,7 +43,7 @@ OperacionPago* PaymentBuffer::addOperation(const char* opId, uint32_t orderId, f
 OperacionPago* PaymentBuffer::getOperationById(const char* opId) {
     portENTER_CRITICAL(&mux);
     OperacionPago* found = nullptr;
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < MAX_BUFFER; i++) {
         if (buffer[i].isActive && strcmp(buffer[i].operationId, opId) == 0) {
             found = &buffer[i];
             break;
@@ -51,10 +55,22 @@ OperacionPago* PaymentBuffer::getOperationById(const char* opId) {
 
 void PaymentBuffer::updateState(const char* opId, EstadoOperacion newState, const char* message) {
     portENTER_CRITICAL(&mux);
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < MAX_BUFFER; i++) {
         if (buffer[i].isActive && strcmp(buffer[i].operationId, opId) == 0) {
             buffer[i].estado = newState;
             strlcpy(buffer[i].responseMessage, message, sizeof(buffer[i].responseMessage));
+            buffer[i].updatedAt = time(nullptr);
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&mux);
+}
+
+void PaymentBuffer::setEmittedAt(const char* opId) {
+    portENTER_CRITICAL(&mux);
+    for (int i = 0; i < MAX_BUFFER; i++) {
+        if (buffer[i].isActive && strcmp(buffer[i].operationId, opId) == 0) {
+            buffer[i].emittedAt = time(nullptr);
             break;
         }
     }
@@ -76,7 +92,7 @@ String PaymentBuffer::getAllOperationsJson() {
     JsonArray array = doc.to<JsonArray>();
     
     portENTER_CRITICAL(&mux);
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < MAX_BUFFER; i++) {
         if (buffer[i].isActive) {
             JsonObject obj = array.add<JsonObject>();
             obj["operationId"] = buffer[i].operationId;
@@ -84,6 +100,11 @@ String PaymentBuffer::getAllOperationsJson() {
             obj["amount"] = buffer[i].amount;
             obj["state"] = getEstadoString(buffer[i].estado);
             obj["source"] = buffer[i].source;
+            obj["message"] = buffer[i].responseMessage;
+            obj["rawPayload"] = buffer[i].jsonPayload;
+            obj["createdAt"] = buffer[i].createdAt;
+            obj["updatedAt"] = buffer[i].updatedAt;
+            obj["emittedAt"] = buffer[i].emittedAt;
         }
     }
     portEXIT_CRITICAL(&mux);

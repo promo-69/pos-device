@@ -18,6 +18,9 @@ struct OperacionPago {
     EstadoOperacion estado;
     char source[16]; // "WS" or "HTTP"
     char responseMessage[128];
+    uint32_t createdAt;
+    uint32_t updatedAt;
+    uint32_t emittedAt;
     bool isActive;
 };
 
@@ -29,9 +32,11 @@ public:
     OperacionPago* getOperationById(const char* opId);
     String getAllOperationsJson();
     void updateState(const char* opId, EstadoOperacion newState, const char* message);
+    void setEmittedAt(const char* opId);
 
 private:
-    OperacionPago buffer[50];
+    static const int MAX_BUFFER = 30;
+    OperacionPago buffer[MAX_BUFFER];
     int currentIndex;
     portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
     

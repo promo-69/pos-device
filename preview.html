@@ -1,13 +1,3 @@
-#include "CommsHandler.h"
-#include "NetworkManager.h" 
-#include "PaymentBuffer.h"
-#include "POSController.h"
-
-QueueHandle_t orderQueue = NULL;
-CommsHandler* globalComms = nullptr;
-
-// Dashboard SPA completo guardado directamente en la memoria Flash (PROGMEM)
-const char dashboardHtml[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -23,7 +13,8 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
             --font-sans: system-ui, -apple-system, sans-serif;
             --border-c: #2a2e3d;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; }        /* Layout base */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Layout base */
         body { margin: 0; background: var(--bg-main); color: var(--text-main); font-family: var(--font-sans); height: 100vh; overflow: hidden; }
         .layout { display: flex; height: 100%; width: 100%; }
         .main-wrapper { flex: 1; display: flex; flex-direction: column; overflow: hidden; margin-right: 320px; transition: margin-right 0.3s ease; }
@@ -61,8 +52,7 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
         button.primary:hover { background: rgba(102, 217, 239, 0.2); }
 
         /* Sidebar Cards (Events) */
-        .event-card { background: var(--bg-main); border: 1px solid var(--border-c); border-radius: 6px; padding: 0.75rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; cursor: pointer; transition: background 0.2s; }
-        .event-card:hover { background: rgba(255,255,255,0.05); }
+        .event-card { background: var(--bg-main); border: 1px solid var(--border-c); border-radius: 6px; padding: 0.75rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.5rem; }
         .event-header { display: flex; justify-content: space-between; align-items: center; }
         .badge { background: rgba(102, 217, 239, 0.15); color: var(--c-blue); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; font-family: var(--font-sans); font-weight: bold; border: 1px solid rgba(102, 217, 239, 0.3); }
         .badge.COMPLETADO { background: rgba(166, 226, 46, 0.15); color: var(--c-green); border-color: rgba(166, 226, 46, 0.3); }
@@ -70,15 +60,6 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
         .badge.EN_COLA { background: rgba(230, 219, 116, 0.15); color: var(--c-yellow); border-color: rgba(230, 219, 116, 0.3); }
         .time { color: var(--text-muted); font-size: 0.7rem; font-family: var(--font-sans); }
         .event-body { color: #a0aabf; line-height: 1.4; word-break: break-all; }
-
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; display: none; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
-        .modal-overlay.active { display: flex; animation: fadeIn 0.2s; }
-        .modal-content { background: var(--bg-main); border: 1px solid var(--border-c); border-radius: 6px; width: 90%; max-width: 400px; padding: 1.5rem; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        .modal-header { font-size: 1.1rem; color: var(--c-blue); margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-family: var(--font-sans); }
-        .modal-close { cursor: pointer; color: var(--text-muted); font-size: 1.2rem; }
-        .modal-close:hover { color: var(--c-red); }
-        .modal-body { color: var(--text-main); font-size: 0.9rem; line-height: 1.6; }
-        .modal-body strong { color: #a0aabf; }
 
         .view { display: none; }
         .view.active { display: block; animation: fadeIn 0.2s ease-out; }
@@ -131,6 +112,7 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
             </div>
             
             <div class="main">
+                <!-- VISTA: PAGOS -->
                 <div id="pagos" class="view active">
                     <div class="log-line"><span class="c-blue">root@pos</span>:<span class="c-green">~/cobro</span>$ init_transaction</div>
                     <br>
@@ -153,6 +135,7 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
                     </div>
                 </div>
                 
+                <!-- VISTA: LECTOR -->
                 <div id="lector" class="view">
                     <div class="log-line"><span class="c-blue">root@pos</span>:<span class="c-green">~/lector</span>$ read_rfid_card</div>
                     <br>
@@ -164,8 +147,9 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
                     </div>
                 </div>
                 
+                <!-- VISTA: CONFIG -->
                 <div id="config" class="view">
-                    <div class="log-line"><span class="c-blue">root@pos</span>:<span class="c-green">~/config</span>$ edit_network</div>
+                    <div class="log-line"><span class="c-blue">root@pos</span>:<span class="c-green">~/config</span>$ edit_settings</div>
                     <br>
                     <form id="configForm">
                         <div class="form-group"><label>>_ URL API</label><input type="url" id="apiUrl" name="apiUrl"></div>
@@ -181,22 +165,14 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
                     <button type="button" style="color:var(--c-red); border-color:rgba(249,38,114,0.4);" onclick="resetWifi()">>_ PURGE_WIFI</button>
                 </div>
             </div>
+        </div>
+        
         <!-- REGISTRO DE EVENTOS (Sidebar) -->
         <div class="sidebar">
             <div class="sidebar-header">REGISTRO DE EVENTOS</div>
             <div class="sidebar-content" id="historyList">
                 <div class="log-line c-muted" style="text-align:center; margin-top:2rem;">[ Terminal iniciada. Esperando eventos... ]</div>
             </div>
-        </div>
-    </div>
-    
-    <div class="modal-overlay" id="eventModal" onclick="if(event.target===this)closeModal()">
-        <div class="modal-content">
-            <div class="modal-header">
-                <span>Detalle de Transacción</span>
-                <span class="modal-close" onclick="closeModal()">✕</span>
-            </div>
-            <div class="modal-body" id="modalBody"></div>
         </div>
     </div>
     
@@ -253,7 +229,7 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
         }
         window.addEventListener('resize', updateSidebarPadding);
         window.addEventListener('DOMContentLoaded', updateSidebarPadding);
-        
+
         async function activateReader() {
             const btn = document.getElementById('btnActivarLector');
             const ui = document.getElementById('readerUI');
@@ -422,7 +398,6 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
         
         // Polling global del historial
         setInterval(loadHistory, 3000);
-        window.addEventListener('DOMContentLoaded', loadHistory);
         
         async function loadConfig() {
             try {
@@ -446,292 +421,37 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
             }
         }
         
-        loadConfig();
-        setInterval(loadHistory, 3000); // Auto-refresh history panel
+        // Mock data para previsualización sin conectarse al ESP32 real
+        window.addEventListener('DOMContentLoaded', () => {
+            // Interceptar fetch de la demo
+            const originalFetch = window.fetch;
+            window.fetch = async function(url, options) {
+                if (url === '/api/config') {
+                    return { ok: true, json: async () => ({ apiUrl: 'https://banco.test/api', apiKey: 'xxxxxxxxxx', backendUrl: 'ws://backend.test' }) };
+                }
+                if (url === '/payments') {
+                    return {
+                        ok: true,
+                        json: async () => ([
+                            { state: 'COMPLETADO', operationId: 105, amount: 25.50, message: 'Pago Aprobado' },
+                            { state: 'ERROR', operationId: 104, amount: 15.00, message: 'Fondos Insuficientes' },
+                            { state: 'EN_COLA', operationId: 106, amount: 45.00, message: 'Esperando validación' }
+                        ])
+                    };
+                }
+                return originalFetch.apply(this, arguments);
+            };
+            
+            // Inyectar algunos eventos demo en el Sidebar
+            setTimeout(() => {
+                const data = [
+                    { state: 'EN_COLA', operationId: 101, amount: 15.00, message: 'Solicitud Creada' },
+                    { state: 'COMPLETADO', operationId: 102, amount: 25.00, message: 'Txn Confirmada via API' },
+                    { state: 'ERROR', operationId: 103, amount: 50.00, message: 'Lectura RFID fallida' }
+                ];
+                renderList(data);
+            }, 500);
+        });
     </script>
 </body>
 </html>
-)rawliteral";
-
-CommsHandler::CommsHandler() : server(80) {
-    globalComms = this;
-    wsEnabled = false;
-}
-
-void CommsHandler::init() {
-    paymentBuffer.init();
-    orderQueue = xQueueCreate(10, sizeof(QueueItem));
-
-    if (!MDNS.begin("cineflix-pos")) {
-        Serial.println("Error configurando mDNS!");
-    } else {
-        Serial.println("mDNS iniciado. URL: http://cineflix-pos.local");
-    }
-
-    setupHttpServer();
-    setupWebSocket();
-}
-
-void CommsHandler::setupHttpServer() {
-    server.on("/", HTTP_GET, [this]() { this->handleHttpRoot(); });
-    server.on("/api/config", HTTP_GET, [this]() { this->handleHttpGetConfig(); });
-    server.on("/api/read-card", HTTP_GET, [this]() { this->handleHttpReadCard(); });
-    server.on("/config", HTTP_POST, [this]() { this->handleHttpConfig(); });
-    server.on("/reset-wifi", HTTP_POST, [this]() { this->handleHttpResetWiFi(); });
-    
-    server.on("/payments", HTTP_POST, [this]() { this->handleHttpPaymentsPost(); });
-    server.on("/payments", HTTP_GET, [this]() { this->handleHttpPaymentsGetList(); });
-    
-    server.onNotFound([this]() {
-        if (server.method() == HTTP_GET && server.uri().startsWith("/payments/")) {
-            this->handleHttpPaymentsGetDetail();
-        } else {
-            this->server.send(404, "text/plain", "No encontrado");
-        }
-    });
-
-    server.begin();
-    Serial.println("Servidor HTTP local iniciado");
-}
-
-void CommsHandler::handleHttpRoot() {
-    // Sirve el HTML desde la memoria Flash usando send_P
-    server.send_P(200, "text/html", dashboardHtml);
-}
-
-void CommsHandler::handleHttpGetConfig() {
-    JsonDocument doc;
-    doc["apiUrl"] = apiUrl;
-    doc["apiKey"] = apiKey;
-    doc["backendUrl"] = backendUrl;
-    String out;
-    serializeJson(doc, out);
-    server.send(200, "application/json", out);
-}
-
-void CommsHandler::handleHttpReadCard() {
-    String uid = POSController::tryReadCard();
-    if (uid.length() > 0) {
-        server.send(200, "application/json", "{\"uid\":\"" + uid + "\"}");
-    } else {
-        server.send(204, "application/json", "{}");
-    }
-}
-
-void CommsHandler::handleHttpConfig() {
-    if (server.hasArg("apiUrl")) {
-        apiUrl = server.arg("apiUrl");
-    }
-    if (server.hasArg("apiKey")) {
-        apiKey = server.arg("apiKey");
-    }
-    if (server.hasArg("backendUrl")) {
-        backendUrl = server.arg("backendUrl");
-    }
-    
-    networkManager.saveConfig();
-    
-    // Restart WS logic if changed
-    setupWebSocket();
-    
-    server.send(200, "application/json", "{\"status\":\"ok\"}");
-}
-
-void CommsHandler::handleHttpResetWiFi() {
-    server.send(200, "application/json", "{\"status\":\"ok\"}");
-    delay(1000);
-    networkManager.resetWiFi();
-    ESP.restart();
-}
-
-void CommsHandler::handleHttpPaymentsPost() {
-    if (server.hasArg("plain") == false) {
-        server.send(400, "text/plain", "Falta el cuerpo JSON");
-        return;
-    }
-
-    String body = server.arg("plain");
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, body);
-
-    if (error) {
-        server.send(400, "text/plain", "JSON Invalido");
-        return;
-    }
-
-    uint32_t orderId = doc["orderId"] | 0;
-    float amount = doc["amount"] | 0.0f;
-    String rawPayload = body; 
-    String opIdStr = "OP-" + String(millis()) + "-" + String(orderId);
-    
-    OperacionPago* op = paymentBuffer.addOperation(opIdStr.c_str(), orderId, amount, rawPayload.c_str(), "HTTP");
-    
-    if (op != nullptr) {
-        QueueItem item;
-        strlcpy(item.operationId, op->operationId, sizeof(item.operationId));
-        
-        if (xQueueSend(orderQueue, &item, (TickType_t)0) == pdPASS) {
-            String response = "{\"operationId\":\"" + opIdStr + "\", \"status\":\"accepted\"}";
-            server.send(202, "application/json", response);
-        } else {
-            paymentBuffer.updateState(opIdStr.c_str(), ERROR, "Cola llena");
-            server.send(503, "application/json", "{\"status\":\"error\", \"message\":\"Cola llena\"}");
-        }
-    } else {
-        server.send(500, "application/json", "{\"status\":\"error\", \"message\":\"Error de Buffer\"}");
-    }
-}
-
-void CommsHandler::handleHttpPaymentsGetList() {
-    String jsonList = paymentBuffer.getAllOperationsJson();
-    server.send(200, "application/json", jsonList);
-}
-
-void CommsHandler::handleHttpPaymentsGetDetail() {
-    String uri = server.uri();
-    String opId = uri.substring(10); 
-
-    OperacionPago* op = paymentBuffer.getOperationById(opId.c_str());
-    if (op != nullptr) {
-        JsonDocument doc;
-        doc["operationId"] = op->operationId;
-        doc["orderId"] = op->orderId;
-        doc["amount"] = op->amount;
-        
-        String estadoStr;
-        switch(op->estado) {
-            case EN_COLA: estadoStr = "EN_COLA"; break;
-            case PROCESANDO: estadoStr = "PROCESANDO"; break;
-            case COMPLETADO: estadoStr = "COMPLETADO"; break;
-            case ERROR: estadoStr = "ERROR"; break;
-        }
-        doc["state"] = estadoStr;
-        doc["source"] = op->source;
-        doc["message"] = op->responseMessage;
-        doc["rawPayload"] = op->jsonPayload;
-        
-        String out;
-        serializeJson(doc, out);
-        server.send(200, "application/json", out);
-    } else {
-        server.send(404, "application/json", "{\"error\":\"Operacion no encontrada\"}");
-    }
-}
-
-void CommsHandler::setupWebSocket() {
-    if (wsEnabled) {
-        socketIO.disconnect();
-    }
-
-    if (backendUrl.length() == 0) {
-        Serial.println("[WS] backendUrl vacío. WebSocket deshabilitado.");
-        wsEnabled = false;
-        return;
-    }
-    
-    wsEnabled = true;
-    String protocol = "ws";
-    int port = 80;
-    String host = "";
-    String path = "/";
-
-    if (backendUrl.startsWith("wss://")) {
-        protocol = "wss";
-        port = 443;
-        int pathIdx = backendUrl.indexOf("/", 6);
-        if (pathIdx > 0) {
-            host = backendUrl.substring(6, pathIdx);
-            path = backendUrl.substring(pathIdx);
-        } else {
-            host = backendUrl.substring(6);
-        }
-    } else if (backendUrl.startsWith("ws://")) {
-        protocol = "ws";
-        port = 80;
-        int pathIdx = backendUrl.indexOf("/", 5);
-        if (pathIdx > 0) {
-            host = backendUrl.substring(5, pathIdx);
-            path = backendUrl.substring(pathIdx);
-        } else {
-            host = backendUrl.substring(5);
-        }
-    } else {
-        host = backendUrl;
-    }
-
-    if (protocol == "wss") {
-        socketIO.beginSSL(host.c_str(), port, "/socket.io/?EIO=4");
-    } else {
-        socketIO.begin(host.c_str(), port, "/socket.io/?EIO=4");
-    }
-    
-    socketIO.onEvent(socketIOEvent);
-    socketIO.setReconnectInterval(5000);
-    Serial.println("[WS] WebSocket inicializado hacia: " + backendUrl);
-}
-
-void CommsHandler::socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length) {
-    switch(type) {
-        case sIOtype_DISCONNECT:
-            Serial.println("[SocketIO] Desconectado!");
-            break;
-        case sIOtype_CONNECT:
-            Serial.println("[SocketIO] Conectado al backend");
-            globalComms->socketIO.sendEVENT("[\"device_ready\"]");
-            break;
-        case sIOtype_EVENT:
-        {
-            String body = String((char*)payload, length);
-            JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, body);
-
-            // Socket.IO events are arrays: ["event_name", {payload}]
-            if (!error && doc.is<JsonArray>() && doc.size() > 1) {
-                String eventName = doc[0].as<String>();
-                JsonObject eventData = doc[1].as<JsonObject>();
-                
-                if (!eventData["orderId"].isNull()) {
-                    uint32_t orderId = eventData["orderId"] | 0;
-                    float amount = eventData["amount"] | 0.0f;
-                    
-                    String payloadStr;
-                    serializeJson(eventData, payloadStr);
-                    
-                    String opIdStr = "OP-" + String(millis()) + "-" + String(orderId);
-                    OperacionPago* op = paymentBuffer.addOperation(opIdStr.c_str(), orderId, amount, payloadStr.c_str(), "WSS");
-                    
-                    if (op != nullptr) {
-                        QueueItem item;
-                        strlcpy(item.operationId, op->operationId, sizeof(item.operationId));
-                        if (xQueueSend(orderQueue, &item, (TickType_t)0) == pdPASS) {
-                            String resp = "[\"pos_payment_accepted\", {\"operationId\":\"" + opIdStr + "\", \"status\":\"accepted\"}]";
-                            globalComms->socketIO.sendEVENT(resp.c_str());
-                        } else {
-                            paymentBuffer.updateState(opIdStr.c_str(), ERROR, "Cola llena");
-                            String err = "[\"pos_payment_error\", {\"operationId\":\"" + opIdStr + "\", \"status\":\"error\"}]";
-                            globalComms->socketIO.sendEVENT(err.c_str());
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        default:
-            break;
-    }
-}
-
-void CommsHandler::loop() {
-    server.handleClient();
-    if (wsEnabled) {
-        socketIO.loop();
-    }
-}
-
-void CommsHandler::sendWebSocketMessage(const String& msg) {
-    if (wsEnabled) {
-        // Asume que msg es un JSON, lo envuelve en un evento Socket.IO
-        String sMsg = "[\"pos_payment_response\"," + msg + "]";
-        socketIO.sendEVENT(sMsg.c_str());
-    }
-}

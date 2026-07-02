@@ -12,9 +12,9 @@ NetworkManager::NetworkManager() :
 
 void NetworkManager::loadConfig() {
     preferences.begin("pos_config", true); // true for read-only
-    apiUrl = preferences.getString("apiUrl", "https://api.banco.com/v1/charge");
-    backendUrl = preferences.getString("backendUrl", "wss://tu-backend.com/ws");
-    apiKey = preferences.getString("apiKey", "default_key");
+    apiUrl = preferences.getString("apiUrl", "http://192.168.31.95:5175/api/v1/pos/transfer");
+    backendUrl = preferences.getString("backendUrl", "");
+    apiKey = preferences.getString("apiKey", "mt_RI7xGuLUb4JWOsDTBx811SqiMAS6qC4z");
     preferences.end();
 }
 
@@ -33,12 +33,17 @@ void NetworkManager::resetWiFi() {
 void NetworkManager::init() {
     loadConfig();
 
+    WiFi.disconnect(false, true); // Limpiar estado previo de conexión para evitar cuelgues
     WiFi.mode(WIFI_AP_STA); // Forza el modo dual para evitar que el radio colapse al escanear
     WiFi.setSleep(false); // Estabiliza el Portal Cautivo evitando que la antena se duerma
     WiFiManager wifiManager;
     
     wifiManager.setRemoveDuplicateAPs(true);   // Ahorra RAM en la lista
     wifiManager.setMinimumSignalQuality(20);   // Filtra redes basura
+    
+    // Mejoras de estabilidad para ESP32-C3 al escanear:
+    wifiManager.setConfigPortalTimeout(180);   // Si el usuario no hace nada en 3 min, reiniciar
+    wifiManager.setConnectTimeout(15);         // No esperar demasiado si la contraseña es incorrecta
     
     // Set custom values to the portal fields
     custom_api_url.setValue(apiUrl.c_str(), 128);
@@ -61,7 +66,7 @@ void NetworkManager::init() {
     // Fetches ssid and pass and tries to connect
     // if it does not connect it starts an access point with the specified name
     // and goes into a blocking loop awaiting configuration
-    if (!wifiManager.autoConnect("ESP32-POS-Config")) {
+    if (!wifiManager.autoConnect("Cineflix POS")) {
         Serial.println("Fallo al conectar o timeout");
         delay(3000);
         // Reset and try again
@@ -72,4 +77,8 @@ void NetworkManager::init() {
     Serial.println("Conectado a WiFi!");
     Serial.print("IP: ");
     Serial.println(WiFi.localIP());
+    
+    // Configurar NTP para estampas de tiempo reales (UTC 0)
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    Serial.println("Sincronizando reloj via NTP...");
 }
