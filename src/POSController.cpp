@@ -96,14 +96,12 @@ void POSController::executeBankTransaction(const char* operationId) {
     if (cardId == "") {
         paymentBuffer.updateState(operationId, ERROR, "Tiempo de espera agotado. No se leyo tarjeta.");
         if (strcmp(op->source, "WSS") == 0 && globalComms != nullptr) {
-            String err = "[\"pos_payment_error\", {\"operationId\":\"" + String(operationId) + "\", \"status\":\"timeout\"}]";
-            // A esto le accedemos directamente via socketIO en CommsHandler pero ya que webSocket/socketIO son privados necesitamos un helper. 
-            // Oh, sendWebSocketMessage fue modificada a enviar eventos de respuesta.
-            // Para mantenerlo consistente, llamaremos a sendWebSocketMessage pero enviándole un JSON plano si tuvieramos la necesidad, 
-            // pero como sendWebSocketMessage envuelve todo en pos_payment_response, es mejor mandarlo asi:
-            // "{\"error\":\"timeout\"}" envuelto en pos_payment_response. 
-            // Wait, el error del banco se enviaba así! 
-            globalComms->sendWebSocketMessage("{\"operationId\":\"" + String(operationId) + "\", \"status\":\"timeout\", \"error\":\"No se leyo tarjeta\"}");
+            JsonDocument frontDoc;
+            deserializeJson(frontDoc, op->jsonPayload);
+            String ticketId = frontDoc["ticketId"] | "";
+            
+            String wsMsg = "{\"ticketId\":\"" + ticketId + "\", \"success\":false, \"reference_number\":\"\", \"message\":\"Tiempo de espera agotado\"}";
+            globalComms->sendSocketIOEvent("pos:payment_result", wsMsg);
         }
         return; // Cancelamos ejecucion y pasamos a la sig en cola
     }
@@ -173,8 +171,10 @@ void POSController::executeBankTransaction(const char* operationId) {
 
                 // Decoupled Response Channel
                 if (strcmp(op->source, "WSS") == 0 && globalComms != nullptr) {
-                    String wsMsg = "{\"operationId\":\"" + String(operationId) + "\", \"status\":\"" + String(op->estado == COMPLETADO ? "success" : "error") + "\"}";
-                    globalComms->sendWebSocketMessage(wsMsg);
+                    String ticketId = frontDoc["ticketId"] | "";
+                    bool isSuccess = (op->estado == COMPLETADO);
+                    String wsMsg = "{\"ticketId\":\"" + ticketId + "\", \"success\":" + String(isSuccess ? "true" : "false") + ", \"reference_number\":\"" + String(isSuccess ? operationId : "") + "\", \"message\":\"" + resultMessage + "\"}";
+                    globalComms->sendSocketIOEvent("pos:payment_result", wsMsg);
                     paymentBuffer.setEmittedAt(operationId);
                 }
             } else {

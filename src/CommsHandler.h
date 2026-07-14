@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <WebServer.h>
+#include <uri/UriBraces.h>
 #include <SocketIOclient.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
@@ -18,13 +19,17 @@ public:
     CommsHandler();
     void init();
     void loop();
-    void sendWebSocketMessage(const String& msg);
+    void sendSocketIOEvent(const String& eventName, const String& jsonPayload);
 
 private:
     WebServer server;
     SocketIOclient socketIO;
     bool wsEnabled;
     
+    // Variables para el workaround de Socket.IO
+    bool pendingWsAuth = false;
+    unsigned long wsAuthTimer = 0;
+
     void setupHttpServer();
     void setupWebSocket();
     
@@ -37,6 +42,10 @@ private:
     void handleHttpPaymentsPost();
     void handleHttpPaymentsGetList();
     void handleHttpPaymentsGetDetail();
+    
+    void handleHttpWsConnect();
+    void handleHttpWsDisconnect();
+    void handleHttpWsStatus();
     
     static void socketIOEvent(socketIOmessageType_t type, uint8_t * payload, size_t length);
 };

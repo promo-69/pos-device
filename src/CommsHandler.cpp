@@ -167,10 +167,23 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
                 <div id="config" class="view">
                     <div class="log-line"><span class="c-blue">root@pos</span>:<span class="c-green">~/config</span>$ edit_network</div>
                     <br>
+                    
+                    <div style="background:var(--bg-header); padding:1rem; border:1px solid var(--border-c); border-radius:4px; margin-bottom:1.5rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <div id="wsIndicator" style="width:12px; height:12px; border-radius:50%; background:var(--c-red); box-shadow:0 0 8px var(--c-red);"></div>
+                            <span id="wsStatusText" style="font-weight:bold; font-size:0.9rem;">Desconectado</span>
+                        </div>
+                        <div style="display:flex; gap:0.5rem;">
+                            <button type="button" class="primary" onclick="connectWs()">>_ CONNECT WS</button>
+                            <button type="button" class="secondary" style="background:var(--bg-main);" onclick="disconnectWs()">>_ DISCONNECT</button>
+                        </div>
+                    </div>
+                    
                     <form id="configForm">
                         <div class="form-group"><label>>_ URL API</label><input type="url" id="apiUrl" name="apiUrl"></div>
                         <div class="form-group"><label>>_ API Key</label><input type="password" id="apiKey" name="apiKey"></div>
                         <div class="form-group"><label>>_ URL WebSocket</label><input type="text" id="backendUrl" name="backendUrl"></div>
+                        <div class="form-group"><label>>_ POS API Key (WS)</label><input type="password" id="posApiKey" name="posApiKey"></div>
                         <div class="form-group"><label>>_ SSID Wifi</label><input type="text" id="ssid"></div>
                         <div class="form-group"><label>>_ Password Wifi</label><input type="password" id="password"></div>
                         <button type="submit" class="primary">>_ SAVE</button>
@@ -368,10 +381,15 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
             let payloadObj = {};
             try { payloadObj = JSON.parse(item.rawPayload || '{}'); } catch(e) {}
             
+            let destAcc = payloadObj.destinationAccount || '-';
+            if (typeof destAcc === 'object') {
+                destAcc = destAcc.bank ? (destAcc.bank + " - " + destAcc.number) : JSON.stringify(destAcc);
+            }
+            
             let html = `
                 <div style="margin-bottom:10px;"><strong>Orden Interna:</strong> ${item.orderId}</div>
                 <div style="margin-bottom:10px;"><strong>ID de Operación:</strong> ${item.operationId}</div>
-                <div style="margin-bottom:10px;"><strong>Cuenta Destino:</strong> ${payloadObj.destinationAccount || '-'}</div>
+                <div style="margin-bottom:10px;"><strong>Cuenta Destino:</strong> ${destAcc}</div>
                 <div style="margin-bottom:10px;"><strong>Documento Destino:</strong> ${payloadObj.destinationDocument || '-'}</div>
                 <div style="margin-bottom:10px;"><strong>Origen:</strong> ${item.source}</div>
                 <div style="margin-bottom:10px;"><strong>Monto:</strong> $${item.amount.toFixed(2)}</div>
@@ -427,7 +445,7 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
         async function loadConfig() {
             try {
                 const r = await fetch('/api/config');
-                if(r.ok) { const c = await r.json(); document.getElementById('apiUrl').value = c.apiUrl || ''; document.getElementById('apiKey').value = c.apiKey || ''; document.getElementById('backendUrl').value = c.backendUrl || ''; }
+                if(r.ok) { const c = await r.json(); document.getElementById('apiUrl').value = c.apiUrl || ''; document.getElementById('apiKey').value = c.apiKey || ''; document.getElementById('backendUrl').value = c.backendUrl || ''; document.getElementById('posApiKey').value = c.posApiKey || ''; }
             } catch(e) {}
         }
         document.getElementById('configForm').addEventListener('submit', async (e) => {
@@ -448,6 +466,50 @@ const char dashboardHtml[] PROGMEM = R"rawliteral(
         
         loadConfig();
         setInterval(loadHistory, 3000); // Auto-refresh history panel
+
+        async function connectWs() {
+            document.getElementById('wsIndicator').style.background = 'var(--c-yellow)';
+            document.getElementById('wsIndicator').style.boxShadow = '0 0 8px var(--c-yellow)';
+            document.getElementById('wsStatusText').innerText = 'Conectando...';
+            document.getElementById('wsStatusText').style.color = 'var(--c-yellow)';
+            try { await fetch('/api/ws-connect', { method: 'POST' }); } catch(e) {}
+            setTimeout(checkWsStatus, 2000);
+        }
+
+        async function disconnectWs() {
+            document.getElementById('wsIndicator').style.background = 'var(--c-yellow)';
+            document.getElementById('wsIndicator').style.boxShadow = '0 0 8px var(--c-yellow)';
+            document.getElementById('wsStatusText').innerText = 'Desconectando...';
+            document.getElementById('wsStatusText').style.color = 'var(--c-yellow)';
+            try { await fetch('/api/ws-disconnect', { method: 'POST' }); } catch(e) {}
+            setTimeout(checkWsStatus, 2000);
+        }
+
+        async function checkWsStatus() {
+            try {
+                const res = await fetch('/api/ws-status');
+                if(res.ok) {
+                    const data = await res.json();
+                    const ind = document.getElementById('wsIndicator');
+                    const txt = document.getElementById('wsStatusText');
+                    if(data.connected) {
+                        ind.style.background = 'var(--c-green)';
+                        ind.style.boxShadow = '0 0 8px var(--c-green)';
+                        txt.innerText = 'Conectado';
+                        txt.style.color = 'var(--c-green)';
+                    } else {
+                        ind.style.background = 'var(--c-red)';
+                        ind.style.boxShadow = '0 0 8px var(--c-red)';
+                        txt.innerText = 'Desconectado';
+                        txt.style.color = 'var(--c-red)';
+                    }
+                }
+            } catch(e) {}
+        }
+        
+        setInterval(checkWsStatus, 3000);
+        checkWsStatus();
+
     </script>
 </body>
 </html>
@@ -477,11 +539,14 @@ void CommsHandler::setupHttpServer() {
     server.on("/api/config", HTTP_GET, [this]() { this->handleHttpGetConfig(); });
     server.on("/api/read-card", HTTP_GET, [this]() { this->handleHttpReadCard(); });
     server.on("/config", HTTP_POST, [this]() { this->handleHttpConfig(); });
-    server.on("/reset-wifi", HTTP_POST, [this]() { this->handleHttpResetWiFi(); });
-    
-    server.on("/payments", HTTP_POST, [this]() { this->handleHttpPaymentsPost(); });
-    server.on("/payments", HTTP_GET, [this]() { this->handleHttpPaymentsGetList(); });
-    
+    server.on("/payments", HTTP_POST, std::bind(&CommsHandler::handleHttpPaymentsPost, this));
+    server.on("/payments", HTTP_GET, std::bind(&CommsHandler::handleHttpPaymentsGetList, this));
+    server.on(UriBraces("/payments/{}"), HTTP_GET, std::bind(&CommsHandler::handleHttpPaymentsGetDetail, this));
+
+    server.on("/api/ws-connect", HTTP_POST, std::bind(&CommsHandler::handleHttpWsConnect, this));
+    server.on("/api/ws-disconnect", HTTP_POST, std::bind(&CommsHandler::handleHttpWsDisconnect, this));
+    server.on("/api/ws-status", HTTP_GET, std::bind(&CommsHandler::handleHttpWsStatus, this));
+
     server.onNotFound([this]() {
         if (server.method() == HTTP_GET && server.uri().startsWith("/payments/")) {
             this->handleHttpPaymentsGetDetail();
@@ -504,6 +569,7 @@ void CommsHandler::handleHttpGetConfig() {
     doc["apiUrl"] = apiUrl;
     doc["apiKey"] = apiKey;
     doc["backendUrl"] = backendUrl;
+    doc["posApiKey"] = posApiKey;
     String out;
     serializeJson(doc, out);
     server.send(200, "application/json", out);
@@ -527,6 +593,9 @@ void CommsHandler::handleHttpConfig() {
     }
     if (server.hasArg("backendUrl")) {
         backendUrl = server.arg("backendUrl");
+    }
+    if (server.hasArg("posApiKey")) {
+        posApiKey = server.arg("posApiKey");
     }
     
     networkManager.saveConfig();
@@ -618,6 +687,23 @@ void CommsHandler::handleHttpPaymentsGetDetail() {
     }
 }
 
+void CommsHandler::handleHttpWsConnect() {
+    setupWebSocket();
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+void CommsHandler::handleHttpWsDisconnect() {
+    wsEnabled = false;
+    socketIO.disconnect();
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+void CommsHandler::handleHttpWsStatus() {
+    bool connected = socketIO.isConnected();
+    String resp = "{\"connected\":" + String(connected ? "true" : "false") + "}";
+    server.send(200, "application/json", resp);
+}
+
 void CommsHandler::setupWebSocket() {
     if (wsEnabled) {
         socketIO.disconnect();
@@ -635,34 +721,35 @@ void CommsHandler::setupWebSocket() {
     String host = "";
     String path = "/";
 
-    if (backendUrl.startsWith("wss://")) {
+    String cleanUrl = backendUrl;
+    if (cleanUrl.startsWith("https://") || cleanUrl.startsWith("wss://")) {
         protocol = "wss";
         port = 443;
-        int pathIdx = backendUrl.indexOf("/", 6);
-        if (pathIdx > 0) {
-            host = backendUrl.substring(6, pathIdx);
-            path = backendUrl.substring(pathIdx);
-        } else {
-            host = backendUrl.substring(6);
-        }
-    } else if (backendUrl.startsWith("ws://")) {
+        cleanUrl = cleanUrl.substring(cleanUrl.indexOf("://") + 3);
+    } else if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("ws://")) {
         protocol = "ws";
         port = 80;
-        int pathIdx = backendUrl.indexOf("/", 5);
-        if (pathIdx > 0) {
-            host = backendUrl.substring(5, pathIdx);
-            path = backendUrl.substring(pathIdx);
-        } else {
-            host = backendUrl.substring(5);
-        }
+        cleanUrl = cleanUrl.substring(cleanUrl.indexOf("://") + 3);
+    }
+
+    int pathIdx = cleanUrl.indexOf("/");
+    if (pathIdx > 0) {
+        path = cleanUrl.substring(pathIdx);
+        cleanUrl = cleanUrl.substring(0, pathIdx);
+    }
+
+    int portIdx = cleanUrl.indexOf(":");
+    if (portIdx > 0) {
+        port = cleanUrl.substring(portIdx + 1).toInt();
+        host = cleanUrl.substring(0, portIdx);
     } else {
-        host = backendUrl;
+        host = cleanUrl;
     }
 
     if (protocol == "wss") {
-        socketIO.beginSSL(host.c_str(), port, "/socket.io/?EIO=4");
+        socketIO.beginSSL(host.c_str(), port, "/socket.io/?EIO=4&transport=websocket");
     } else {
-        socketIO.begin(host.c_str(), port, "/socket.io/?EIO=4");
+        socketIO.begin(host.c_str(), port, "/socket.io/?EIO=4&transport=websocket");
     }
     
     socketIO.onEvent(socketIOEvent);
@@ -676,9 +763,13 @@ void CommsHandler::socketIOEvent(socketIOmessageType_t type, uint8_t * payload, 
             Serial.println("[SocketIO] Desconectado!");
             break;
         case sIOtype_CONNECT:
-            Serial.println("[SocketIO] Conectado al backend");
-            globalComms->socketIO.sendEVENT("[\"device_ready\"]");
+        {
+            Serial.println("[SocketIO] TCP Conectado. Forzando handshake Socket.IO (40)...");
+            globalComms->socketIO.send(sIOtype_CONNECT, "/");
+            globalComms->pendingWsAuth = true;
+            globalComms->wsAuthTimer = millis();
             break;
+        }
         case sIOtype_EVENT:
         {
             String body = String((char*)payload, length);
@@ -690,9 +781,15 @@ void CommsHandler::socketIOEvent(socketIOmessageType_t type, uint8_t * payload, 
                 String eventName = doc[0].as<String>();
                 JsonObject eventData = doc[1].as<JsonObject>();
                 
-                if (!eventData["orderId"].isNull()) {
+                if (eventName == "pos:process_payment" && !eventData["orderId"].isNull()) {
                     uint32_t orderId = eventData["orderId"] | 0;
                     float amount = eventData["amount"] | 0.0f;
+                    
+                    // Map document -> destinationDocument and accountNumber -> destinationAccount
+                    // for POSController to consume seamlessly without breaking the HTTP path
+                    eventData["destinationDocument"] = eventData["document"];
+                    eventData["destinationAccount"] = eventData["accountNumber"];
+                    // ticketId is preserved in eventData automatically
                     
                     String payloadStr;
                     serializeJson(eventData, payloadStr);
@@ -725,13 +822,25 @@ void CommsHandler::loop() {
     server.handleClient();
     if (wsEnabled) {
         socketIO.loop();
+        
+        // Workaround: Esperar a que la libreria complete el handshake interno de Socket.IO antes de emitir eventos
+        if (pendingWsAuth && (millis() - wsAuthTimer > 1500)) {
+            pendingWsAuth = false;
+            Serial.println("[SocketIO] Handshake completo. Enviando autenticacion pos:join...");
+            JsonDocument joinDoc;
+            joinDoc.add("pos:join");
+            JsonObject auth = joinDoc.add<JsonObject>();
+            auth["posApiKey"] = posApiKey;
+            String joinMsg;
+            serializeJson(joinDoc, joinMsg);
+            socketIO.sendEVENT(joinMsg.c_str());
+        }
     }
 }
 
-void CommsHandler::sendWebSocketMessage(const String& msg) {
+void CommsHandler::sendSocketIOEvent(const String& eventName, const String& jsonPayload) {
     if (wsEnabled) {
-        // Asume que msg es un JSON, lo envuelve en un evento Socket.IO
-        String sMsg = "[\"pos_payment_response\"," + msg + "]";
+        String sMsg = "[\"" + eventName + "\"," + jsonPayload + "]";
         socketIO.sendEVENT(sMsg.c_str());
     }
 }

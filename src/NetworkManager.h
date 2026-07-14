@@ -8,6 +8,7 @@
 extern String apiUrl;
 extern String backendUrl;
 extern String apiKey;
+extern String posApiKey;
 
 class NetworkManager {
 public:
@@ -25,6 +26,7 @@ private:
     WiFiManagerParameter custom_api_url;
     WiFiManagerParameter custom_backend_url;
     WiFiManagerParameter custom_api_key;
+    WiFiManagerParameter custom_pos_api_key;
 };
 
 extern NetworkManager networkManager;
