@@ -148,11 +148,29 @@ void POSController::executeBankTransaction(const char* operationId) {
 
                 int httpCode = http.POST(requestBody);
                 String resultMessage = "";
+                String bankReference = "";
+                float bankAmount = 0.0f;
 
                 if (httpCode > 0) {
                     String payload = http.getString();
                     if (httpCode >= 200 && httpCode < 300) {
                         resultMessage = "Aprobado (HTTP " + String(httpCode) + ")";
+                        
+                        JsonDocument successDoc;
+                        if (!deserializeJson(successDoc, payload)) {
+                            if (successDoc["data"].is<JsonObject>()) {
+                                JsonObject dataObj = successDoc["data"].as<JsonObject>();
+                                if (dataObj.containsKey("reference")) bankReference = dataObj["reference"].as<String>();
+                                else if (dataObj.containsKey("id")) bankReference = dataObj["id"].as<String>();
+                                
+                                if (dataObj.containsKey("amount")) {
+                                    bankAmount = abs(dataObj["amount"].as<float>());
+                                }
+                            } else if (successDoc.containsKey("reference_number")) {
+                                bankReference = successDoc["reference_number"].as<String>();
+                            }
+                        }
+                        
                         paymentBuffer.updateState(operationId, COMPLETADO, resultMessage.c_str());
                     } else {
                         JsonDocument errDoc;
@@ -173,7 +191,15 @@ void POSController::executeBankTransaction(const char* operationId) {
                 if (strcmp(op->source, "WSS") == 0 && globalComms != nullptr) {
                     String ticketId = frontDoc["ticketId"] | "";
                     bool isSuccess = (op->estado == COMPLETADO);
-                    String wsMsg = "{\"ticketId\":\"" + ticketId + "\", \"success\":" + String(isSuccess ? "true" : "false") + ", \"reference_number\":\"" + String(isSuccess ? operationId : "") + "\", \"message\":\"" + resultMessage + "\"}";
+                    String finalRef = (isSuccess && bankReference.length() > 0) ? bankReference : (isSuccess ? operationId : "");
+                    
+                    // Si el banco no retornó monto o hubo error, enviar el monto original pedido
+                    float finalAmount = (isSuccess && bankAmount > 0.0f) ? bankAmount : op->amount;
+                    
+                    String wsMsg = "{\"ticketId\":\"" + ticketId + "\", \"success\":" + String(isSuccess ? "true" : "false") + 
+                                   ", \"reference_number\":\"" + finalRef + "\", \"message\":\"" + resultMessage + "\"" +
+                                   ", \"amount\":" + String(finalAmount, 2) + "}";
+                                   
                     globalComms->sendSocketIOEvent("pos:payment_result", wsMsg);
                     paymentBuffer.setEmittedAt(operationId);
                 }
